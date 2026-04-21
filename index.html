@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TKHub</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app">
+    <!-- Tab Bar -->
+    <div class="tab-bar glass">
+      <div class="tabs-container">
+        <div class="tab active" data-tab="browser">
+          <i class="fas fa-globe"></i>
+          <span>Browse</span>
+          <button class="tab-close"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="tab" data-tab="games">
+          <i class="fas fa-gamepad"></i>
+          <span>Games</span>
+          <button class="tab-close"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="tab" data-tab="editor">
+          <i class="fas fa-code"></i>
+          <span>Editor</span>
+          <button class="tab-close"><i class="fas fa-times"></i></button>
+        </div>
+      </div>
+      <div class="tab-actions">
+        <button class="new-tab-btn"><i class="fas fa-plus"></i></button>
+      </div>
+    </div>
+
+    <!-- Address Bar -->
+    <div class="address-bar glass">
+      <div class="nav-buttons">
+        <button id="backBtn" class="nav-btn"><i class="fas fa-arrow-left"></i></button>
+        <button id="forwardBtn" class="nav-btn"><i class="fas fa-arrow-right"></i></button>
+        <button id="refreshBtn" class="nav-btn"><i class="fas fa-rotate-right"></i></button>
+        <button id="homeBtn" class="nav-btn" onclick="Router.navigate('home')" title="Home"><i class="fas fa-home"></i></button>
+      </div>
+      <div class="url-container">
+        <i class="fas fa-lock security-icon" id="securityIcon"></i>
+        <input type="text" id="urlInput" placeholder="Search or enter address" autocomplete="off">
+        <button id="clearUrl" class="clear-btn"><i class="fas fa-times"></i></button>
+        <div class="ws-indicator" id="wsIndicator" title="WebSocket Proxy Active" style="display: none;">
+          <i class="fas fa-plug" style="color: #28c840;"></i>
+          <span>WSS</span>
+        </div>
+      </div>
+      <div class="address-actions">
+        <button id="bookmarkBtn" class="nav-btn"><i class="fas fa-star"></i></button>
+        <button id="settingsBtn" class="nav-btn" onclick="Router.navigate('settings')" title="Settings"><i class="fas fa-cog"></i></button>
+      </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="content-area">
+      <!-- Browser View -->
+      <div class="view browser-view active" id="browserView">
+        <iframe id="proxyFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" allow="fullscreen; microphone; camera"></iframe>
+        <div class="start-page" id="startPage">
+          <div class="start-content intro-animate">
+            <div class="version-badge">v1.2.1</div>
+            <h1 class="glass-text intro-from-left">TKHub</h1>
+            <p class="subtitle intro-from-right" id="dailyQuote">:P</p>
+            <div class="quick-links intro-from-bottom">
+              <div class="quick-link" data-url="https://google.com">
+                <i class="fab fa-google"></i>
+                <span>Google</span>
+              </div>
+              <div class="quick-link" data-url="https://youtube.com">
+                <i class="fab fa-youtube"></i>
+                <span>YouTube</span>
+              </div>
+              <div class="quick-link" data-url="https://github.com">
+                <i class="fab fa-github"></i>
+                <span>GitHub</span>
+              </div>
+              <div class="quick-link" data-url="https://reddit.com">
+                <i class="fab fa-reddit"></i>
+                <span>Reddit</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Games View -->
+      <div class="view games-view" id="gamesView">
+        <div class="games-container">
+          <div class="games-sidebar glass">
+            <div class="games-search">
+              <i class="fas fa-search"></i>
+              <input type="text" id="gameSearch" placeholder="Search games...">
+            </div>
+            <div class="games-list" id="gamesList">
+              <div class="loading-games">Scanning Games folder...</div>
+            </div>
+            <div class="games-scan-info">
+              <small>Auto-detecting .html files from Games folder</small>
+            </div>
+            <div class="games-actions" style="padding: 12px; border-top: 1px solid var(--tk-border-idle);">
+              <input type="file" id="gamesFolderPicker" webkitdirectory directory multiple style="display: none;">
+              <input type="file" id="singleGamePicker" accept=".html,.htm" style="display: none;">
+              <button id="scanGamesBtn" class="file-btn" style="width: 100%; justify-content: center;">
+                <i class="fas fa-sync-alt"></i> Auto-Scan Games
+              </button>
+              <button id="addGameBtn" class="file-btn" style="width: 100%; justify-content: center; margin-top: 8px;">
+                <i class="fas fa-folder-open"></i> Select Games Folder
+              </button>
+              <button id="addSingleGameBtn" class="file-btn" style="width: 100%; justify-content: center; margin-top: 8px;">
+                <i class="fas fa-file-code"></i> Add Game File
+              </button>
+              <button id="saveAllGamesBtn" class="file-btn save-btn" style="width: 100%; justify-content: center; margin-top: 8px;">
+                <i class="fas fa-download"></i> Save All Games
+              </button>
+            </div>
+          </div>
+          <div class="games-player" id="gamesPlayer">
+            <div class="player-placeholder">
+              <i class="fas fa-gamepad"></i>
+              <p>Select a game to play</p>
+            </div>
+            <iframe id="gameFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-pointer-lock" allow="fullscreen; pointer-lock" crossorigin="anonymous"></iframe>
+            <div class="player-controls glass" id="playerControls">
+              <button id="fullscreenGame" class="control-btn" title="Fullscreen"><i class="fas fa-expand"></i></button>
+              <button id="refreshGame" class="control-btn" title="Refresh"><i class="fas fa-rotate-right"></i></button>
+              <div class="control-group fps-control">
+                <label>FPS: <span id="fpsValue">60</span></label>
+                <input type="range" id="fpsSlider" min="1" max="560" value="60" class="fps-slider">
+                <div class="fps-presets">
+                  <button class="fps-preset" data-fps="30">30</button>
+                  <button class="fps-preset" data-fps="60">60</button>
+                  <button class="fps-preset" data-fps="144">144</button>
+                  <button class="fps-preset" data-fps="240">240</button>
+                  <button class="fps-preset" data-fps="360">360</button>
+                  <button class="fps-preset" data-fps="560">560</button>
+                </div>
+              </div>
+              <div class="control-divider"></div>
+              <button id="inspectGame" class="control-btn" title="Inspect Element"><i class="fas fa-bug"></i></button>
+              <button id="gameSettingsBtn" class="control-btn" title="Game Settings"><i class="fas fa-cog"></i></button>
+              <button id="modManagerBtn" class="control-btn" title="Mod Manager"><i class="fas fa-puzzle-piece"></i></button>
+              <button id="closeGame" class="control-btn danger" title="Close Game"><i class="fas fa-times"></i></button>
+            </div>
+            
+            <!-- Game Settings Popover -->
+            <div class="game-settings-popover" id="gameSettingsPopover">
+              <div class="game-settings-header">
+                <h4><i class="fas fa-sliders-h"></i> Game Settings</h4>
+                <button id="closeGameSettings" class="close-btn-small"><i class="fas fa-times"></i></button>
+              </div>
+              <div class="game-settings-content">
+                <div class="game-setting-item">
+                  <label>Resolution</label>
+                  <select id="gameResolution" class="game-setting-select">
+                    <option value="original">Original</option>
+                    <option value="720p">720p</option>
+                    <option value="1080p">1080p</option>
+                    <option value="fullscreen">Fullscreen</option>
+                  </select>
+                </div>
+                <div class="game-setting-item">
+                  <label>Quality</label>
+                  <select id="gameQuality" class="game-setting-select">
+                    <option value="low">Low (Better FPS)</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High (Better Quality)</option>
+                    <option value="ultra">Ultra</option>
+                  </select>
+                </div>
+                <div class="game-setting-item">
+                  <label>Anti-Aliasing</label>
+                  <select id="gameAntialiasing" class="game-setting-select">
+                    <option value="off">Off</option>
+                    <option value="2x">2x MSAA</option>
+                    <option value="4x" selected>4x MSAA</option>
+                    <option value="8x">8x MSAA</option>
+                  </select>
+                </div>
+                <div class="game-setting-item">
+                  <label>V-Sync</label>
+                  <label class="toggle-small">
+                    <input type="checkbox" id="gameVsync" checked>
+                    <span class="toggle-slider-small"></span>
+                  </label>
+                </div>
+                <div class="game-setting-item">
+                  <label>Performance Mode</label>
+                  <label class="toggle-small">
+                    <input type="checkbox" id="gamePerfMode">
+                    <span class="toggle-slider-small"></span>
+                  </label>
+                </div>
+                <div class="game-setting-item" title="Optimizes for old/weak hardware (Intel i3 1st gen, integrated GPU)">
+                  <label>Low Performance Mode <i class="fas fa-turtle" style="font-size: 0.8em; opacity: 0.6;"></i></label>
+                  <label class="toggle-small">
+                    <input type="checkbox" id="lowPerfMode">
+                    <span class="toggle-slider-small"></span>
+                  </label>
+                </div>
+                <div class="game-setting-item">
+                  <label>Audio Volume</label>
+                  <input type="range" id="gameVolume" min="0" max="100" value="100" class="volume-slider">
+                </div>
+                <div class="game-setting-divider"></div>
+                <div class="game-setting-item shader-setting">
+                  <label>Post-Processing Shader</label>
+                  <select id="gameShader" class="game-setting-select shader-select">
+                    <option value="none">None</option>
+                    <option value="sharpen">Sharpen</option>
+                    <option value="vibrant">Vibrant</option>
+                    <option value="cinematic">Cinematic</option>
+                    <option value="noir">Noir</option>
+                    <option value="warm">Warm</option>
+                    <option value="cool">Cool</option>
+                    <option value="hdr">HDR</option>
+                    <option value="retro">Retro</option>
+                    <option value="neon">Neon</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Mod Manager Popover -->
+          <div class="mod-manager-popover" id="modManagerPopover">
+            <div class="mod-manager-header">
+              <h4><i class="fas fa-puzzle-piece"></i> Mod Manager</h4>
+              <button id="closeModManager" class="close-btn-small"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="mod-manager-content">
+              <div class="mod-section">
+                <label class="mod-section-title">Active Mods</label>
+                <div class="mod-list" id="activeModsList">
+                  <div class="mod-empty">No mods active</div>
+                </div>
+              </div>
+              <div class="mod-section">
+                <label class="mod-section-title">Create New Mod</label>
+                <div class="mod-form">
+                  <input type="text" id="modName" placeholder="Mod Name" class="mod-input">
+                  <textarea id="modCode" placeholder="JavaScript code to inject..." class="mod-textarea" rows="4"></textarea>
+                  <div class="mod-actions">
+                    <button id="saveModBtn" class="mod-btn primary"><i class="fas fa-save"></i> Save Mod</button>
+                    <button id="testModBtn" class="mod-btn"><i class="fas fa-play"></i> Test</button>
+                  </div>
+                </div>
+              </div>
+              <div class="mod-divider"></div>
+              <div class="mod-section">
+                <label class="mod-section-title">Injected Elements Inspector</label>
+                <div class="inspector-log" id="modInspectorLog">
+                  <div class="inspector-empty">Click 'Inspect' to see game elements</div>
+                </div>
+                <button id="refreshInspectorBtn" class="mod-btn secondary"><i class="fas fa-sync"></i> Refresh Elements</button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- DevTools Panel -->
+          <div class="devtools-panel" id="devtoolsPanel">
+            <div class="devtools-header">
+              <h4><i class="fas fa-bug"></i> Developer Tools</h4>
+              <button id="closeDevtools" class="close-btn-small"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="devtools-content">
+              <div class="devtools-tabs">
+                <button class="devtools-tab active" data-tab="console"><i class="fas fa-terminal"></i> Console</button>
+                <button class="devtools-tab" data-tab="elements"><i class="fas fa-code"></i> Elements</button>
+                <button class="devtools-tab" data-tab="network"><i class="fas fa-network-wired"></i> Network</button>
+              </div>
+              <div class="devtools-view active" id="consoleView">
+                <div class="console-output" id="gameConsole"></div>
+                <div class="console-input-row">
+                  <span class="console-prompt">&gt;</span>
+                  <input type="text" id="consoleInput" class="console-input" placeholder="Enter JavaScript...">
+                </div>
+              </div>
+              <div class="devtools-view" id="elementsView">
+                <div class="elements-tree" id="elementsTree">Select an element to inspect...</div>
+              </div>
+              <div class="devtools-view" id="networkView">
+                <div class="network-log" id="networkLog">Network requests will appear here...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Code Editor View -->
+      <div class="view editor-view" id="editorView">
+        <div class="editor-container">
+          <div class="editor-sidebar glass">
+            <div class="file-actions">
+              <button id="newFile" class="file-btn"><i class="fas fa-file-plus"></i> New</button>
+              <button id="openFile" class="file-btn"><i class="fas fa-folder-open"></i> Open</button>
+              <button id="saveFile" class="file-btn"><i class="fas fa-save"></i> Save</button>
+            </div>
+            <div class="file-tree" id="fileTree">
+              <div class="tree-item">
+                <i class="fas fa-folder"></i>
+                <span>Project</span>
+              </div>
+            </div>
+          </div>
+          <div class="editor-main">
+            <div class="editor-tabs" id="editorTabs">
+              <div class="editor-tab active" data-file="untitled">
+                <span>untitled.html</span>
+                <button class="tab-close"><i class="fas fa-times"></i></button>
+              </div>
+            </div>
+            <div class="editor-workspace">
+              <textarea id="codeEditor" placeholder="<!-- Start coding here -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>My Page</title>
+</head>
+<body>
+  
+</body>
+</html>" spellcheck="false"></textarea>
+              <div class="editor-preview">
+                <iframe id="previewFrame" sandbox="allow-scripts allow-same-origin"></iframe>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Changelog Modal -->
+    <div class="changelog-modal" id="changelogModal">
+      <div class="changelog-backdrop"></div>
+      <div class="changelog-content glass">
+        <div class="changelog-header">
+          <h2><i class="fas fa-sparkles"></i> What's New in TKHub</h2>
+          <button id="closeChangelog" class="close-btn"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="changelog-body" id="changelogBody">
+          <div class="changelog-loading">Loading changelog...</div>
+        </div>
+        <div class="changelog-footer">
+          <label class="changelog-checkbox">
+            <input type="checkbox" id="dontShowChangelog">
+            <span>Don't show again</span>
+          </label>
+          <button id="gotItChangelog" class="changelog-btn">Got it!</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Session Restore Notification -->
+    <div class="session-notification" id="sessionNotification">
+      <div class="session-content">
+        <i class="fas fa-history"></i>
+        <span>Return to where you left off?</span>
+        <div class="session-actions">
+          <button id="resumeSession" class="session-btn primary">Yes</button>
+          <button id="dismissSession" class="session-btn">No</button>
+        </div>
+      </div>
+      <div class="session-progress" id="sessionProgress"></div>
+    </div>
+
+    <!-- Inspect Panel -->
+    <div class="inspect-panel glass" id="inspectPanel">
+      <div class="inspect-header">
+        <h3><i class="fas fa-bug"></i> Inspect Element</h3>
+        <button id="closeInspect" class="close-btn"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="inspect-tabs">
+        <button class="inspect-tab active" data-tab="elements">Elements</button>
+        <button class="inspect-tab" data-tab="console">Console</button>
+        <button class="inspect-tab" data-tab="network">Network</button>
+      </div>
+      <div class="inspect-content">
+        <div class="inspect-view elements-view active" id="elementsView">
+          <div class="dom-tree" id="domTree">Select an element to inspect...</div>
+        </div>
+        <div class="inspect-view console-view" id="consoleView">
+          <div class="console-output" id="consoleOutput"></div>
+          <div class="console-input">
+            <span class="console-prompt">&gt;</span>
+            <input type="text" id="consoleInput" placeholder="Enter JavaScript...">
+          </div>
+        </div>
+        <div class="inspect-view network-view" id="networkView">
+          <div class="network-list" id="networkList">Network activity will appear here...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Menu Overlay -->
+    <div class="menu-overlay" id="menuOverlay">
+      <div class="glass-menu">
+        <button class="menu-item" id="menuInspect"><i class="fas fa-bug"></i> Inspect Element</button>
+        <button class="menu-item" id="menuBookmark"><i class="fas fa-bookmark"></i> Bookmark Page</button>
+        <button class="menu-item" id="menuHistory"><i class="fas fa-history"></i> History</button>
+        <button class="menu-item" id="menuDownloads"><i class="fas fa-download"></i> Downloads</button>
+        <div class="menu-divider"></div>
+        <button class="menu-item" id="menuSettings"><i class="fas fa-cog"></i> Settings</button>
+      </div>
+    </div>
+
+    <!-- Overlay for modals -->
+    <div class="modal-overlay" id="modalOverlay"></div>
+  </div>
+
+  <!-- Window Manager -->
+  <div class="window-manager" id="windowManager"></div>
+
+  <!-- Context Menu -->
+  <div class="context-menu" id="contextMenu">
+    <div class="context-item" data-action="windowed">
+      <i class="fas fa-external-link-alt"></i> Open Windowed
+    </div>
+    <div class="context-item" data-action="refresh">
+      <i class="fas fa-sync-alt"></i> Refresh
+    </div>
+    <div class="context-divider"></div>
+    <div class="context-item" data-action="duplicate">
+      <i class="fas fa-copy"></i> Duplicate
+    </div>
+    <div class="context-item" data-action="close">
+      <i class="fas fa-times"></i> Close Tab
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
