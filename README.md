@@ -2,9 +2,6 @@
 
 ## Uhh info ig
 
-### Performance & Optimization
-- **Low Performance Mode** - Optimizes site for old/weak hardware (Intel i3 1st gen, integrated GPU)
-  - Disables blur/glass effects
+I do not own the games or the ultimate game stash in the this project
 
-
-everything else built by TKJ.
+** Anything else is by TKJ **
