@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TKHub</title>
+  <title>TKHub - Browse. Play. Create.</title>
+  <link rel="icon" type="image/x-icon" href="icon.ico">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -62,11 +63,27 @@
     <div class="content-area">
       <!-- Browser View -->
       <div class="view browser-view active" id="browserView">
+        <!-- Browser Tabs -->
+        <div class="browser-tabs-bar" id="browserTabsBar">
+          <div class="browser-tabs" id="browserTabs">
+            <div class="browser-tab active" data-tab-id="1">
+              <i class="fas fa-globe"></i>
+              <span class="tab-title">New Tab</span>
+              <button class="tab-close-btn"><i class="fas fa-times"></i></button>
+            </div>
+          </div>
+          <button class="new-tab-btn" id="newTabBtn" title="New Tab">
+            <i class="fas fa-plus"></i>
+          </button>
+        </div>
         <iframe id="proxyFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" allow="fullscreen; microphone; camera"></iframe>
         <div class="start-page" id="startPage">
           <div class="start-content intro-animate">
-            <div class="version-badge">v1.2.1</div>
-            <h1 class="glass-text intro-from-left">TKHub</h1>
+            <div class="version-badge">v1.2.2</div>
+            <div class="title-container">
+              <div class="icon-background-blur"></div>
+              <h1 class="glass-text intro-from-left">TKHub</h1>
+            </div>
             <p class="subtitle intro-from-right" id="dailyQuote">:P</p>
             <div class="quick-links intro-from-bottom">
               <div class="quick-link" data-url="https://google.com">

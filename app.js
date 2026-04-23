@@ -212,47 +212,64 @@ function loadUrl(url) {
     showToast('This site may require special handling...');
   }
   
-  // Add to history
-  if (!AppState.settings.blockHistory) {
-    if (AppState.historyIndex < AppState.history.length - 1) {
-      AppState.history = AppState.history.slice(0, AppState.historyIndex + 1);
-    }
-    AppState.history.push(url);
-    AppState.historyIndex++;
-    updateNavButtons();
-  }
-  
-  elements.urlInput.value = url;
-  elements.startPage.classList.add('hidden');
-  elements.proxyFrame.classList.remove('hidden');
-  
-  // Use CORS proxy if enabled
-  if (AppState.settings.enableCors) {
-    const proxyUrl = getCorsProxyUrl(url);
-    elements.proxyFrame.src = proxyUrl;
+  // Use BrowserTabs if available, otherwise fall back to global history
+  if (BrowserTabs && BrowserTabs.activeTabId) {
+    BrowserTabs.navigateInActiveTab(url);
   } else {
-    elements.proxyFrame.src = url;
+    // Legacy behavior
+    if (!AppState.settings.blockHistory) {
+      if (AppState.historyIndex < AppState.history.length - 1) {
+        AppState.history = AppState.history.slice(0, AppState.historyIndex + 1);
+      }
+      AppState.history.push(url);
+      AppState.historyIndex++;
+      updateNavButtons();
+    }
+    
+    elements.urlInput.value = url;
+    elements.startPage.classList.add('hidden');
+    elements.proxyFrame.classList.remove('hidden');
+    
+    // Use CORS proxy if enabled
+    if (AppState.settings.enableCors) {
+      const proxyUrl = getCorsProxyUrl(url);
+      elements.proxyFrame.src = proxyUrl;
+    } else {
+      elements.proxyFrame.src = url;
+    }
   }
+  
+  // Add error handling for proxy failures
+  elements.proxyFrame.addEventListener('error', (e) => {
+    console.error('TKHub: Proxy frame error:', e);
+    handleProxyError(e);
+  });
   
   // Intercept links within iframe - use aggressive mode for dynamic sites
   elements.proxyFrame.addEventListener('load', () => {
+    // Check if the frame loaded successfully
+    try {
+      const frameDoc = elements.proxyFrame.contentDocument;
+      if (!frameDoc || frameDoc.title.includes('Error') || frameDoc.body.innerHTML.includes('404')) {
+        console.log('TKHub: Proxy failed to load content');
+        handleProxyError(new Error('Proxy load failed'));
+        return;
+      }
+    } catch (e) {
+      // Cross-origin, can't check content - assume success
+    }
+    
     startLinkInterception();
     
     // Update URL input with current URL (decoded from proxy if needed)
     try {
       const currentSrc = elements.proxyFrame.src;
-      if (AppState.currentProxy) {
-        if (AppState.currentProxy.type === 'ultraviolet') {
-          // Extract URL from ultraviolet path
-          const match = currentSrc.match(/\/service\/(.+)$/);
-          if (match) {
-            elements.urlInput.value = UltravioletCodec.decode(match[1]);
-          }
-        } else if (AppState.currentProxy.type === 'scramjet') {
-          const match = currentSrc.match(/\/service\/(.+)$/);
-          if (match) {
-            elements.urlInput.value = ScramjetCodec.decode(match[1]);
-          }
+      // Extract URL from /service/ path (local UV proxy)
+      const match = currentSrc.match(/\/service\/(.+)$/);
+      if (match) {
+        const decoded = UltravioletCodec.decode(match[1]);
+        if (decoded && decoded !== currentSrc) {
+          elements.urlInput.value = decoded;
         }
       }
     } catch (e) {
@@ -262,62 +279,41 @@ function loadUrl(url) {
 }
 
 function getCorsProxyUrl(url) {
-  // Proxy type selection: 'cors', 'ultraviolet', 'scramjet', or 'dynamic'
-  const proxyType = AppState.settings.proxyType || 'dynamic';
-  
-  // Ultraviolet proxy services - proper endpoints from titaniumnetwork-dev/ultraviolet
-  const ultravioletProxies = [
-    { url: 'https://uv.holyubofficial.net/service/', type: 'ultraviolet', name: 'HolyUB UV' },
-    { url: 'https://uv.radon.games/service/', type: 'ultraviolet', name: 'Radon UV' },
-    { url: 'https://uv.syndicatex.pages.dev/service/', type: 'ultraviolet', name: 'SyndicateX UV' },
-    { url: 'https://uv-api.vercel.app/service/', type: 'ultraviolet', name: 'Vercel UV' }
-  ];
-  
-  // Scramjet proxy services - proper endpoints from MercuryWorkshop/scramjet
-  const scramjetProxies = [
-    { url: 'https://scramjet.holyubofficial.net/service/', type: 'scramjet', name: 'HolyUB Scramjet' },
-    { url: 'https://scramjet.motortruck1221.me/service/', type: 'scramjet', name: 'MotorTruck Scramjet' },
-    { url: 'https://sj-api.vercel.app/service/', type: 'scramjet', name: 'Vercel Scramjet' }
-  ];
-  
-  // Standard CORS proxies (fallback)
-  const corsProxies = [
-    { url: 'https://corsproxy.io/?', type: 'cors', name: 'CORS Proxy' },
-    { url: 'https://api.allorigins.win/raw?url=', type: 'cors', name: 'AllOrigins' },
-    { url: 'https://api.codetabs.com/v1/proxy?quest=', type: 'cors', name: 'CodeTabs' }
-  ];
-  
-  let proxies;
-  if (proxyType === 'ultraviolet') proxies = ultravioletProxies;
-  else if (proxyType === 'scramjet') proxies = scramjetProxies;
-  else if (proxyType === 'cors') proxies = corsProxies;
-  else proxies = [...ultravioletProxies, ...scramjetProxies, ...corsProxies];
-  
-  // Rotate proxy on error or use sticky session
-  const useSticky = AppState.settings.stickyProxy !== false;
-  if (!AppState.currentProxy || !useSticky) {
-    AppState.currentProxy = proxies[Math.floor(Math.random() * proxies.length)];
-  }
-  
-  // Ultraviolet uses XOR encoding with proper key
-  if (AppState.currentProxy.type === 'ultraviolet') {
+  // Use local Ultraviolet proxy
+  try {
+    // Encode URL using Ultraviolet's XOR codec
     const encoded = UltravioletCodec.encode(url);
-    console.log(`TKHub: Using ${AppState.currentProxy.name} for ${url.substring(0, 50)}...`);
-    return AppState.currentProxy.url + encoded;
+    const proxyUrl = '/service/' + encoded;
+    
+    console.log(`TKHub: Using local Ultraviolet proxy for ${url.substring(0, 50)}...`);
+    return proxyUrl;
+  } catch (e) {
+    console.error('TKHub: Ultraviolet encoding failed:', e);
+    // Fallback to external CORS proxy
+    return 'https://corsproxy.io/?' + encodeURIComponent(url);
   }
-  
-  // Scramjet uses modified base64 encoding
-  if (AppState.currentProxy.type === 'scramjet') {
-    const encoded = ScramjetCodec.encode(url);
-    console.log(`TKHub: Using ${AppState.currentProxy.name} for ${url.substring(0, 50)}...`);
-    return AppState.currentProxy.url + encoded;
-  }
-  
-  // Standard CORS proxy
-  return AppState.currentProxy.url + encodeURIComponent(url);
 }
 
-// Ultraviolet Codec - Proper implementation from titaniumnetwork-dev/ultraviolet
+// Enhanced proxy error handling
+function handleProxyError(error) {
+  console.error('TKHub: Proxy error:', error);
+  
+  // Mark current proxy as failed
+  if (AppState.currentProxy) {
+    if (!AppState.failedProxies) AppState.failedProxies = [];
+    AppState.failedProxies.push(AppState.currentProxy.name);
+    
+    showToast(`Proxy ${AppState.currentProxy.name} failed, trying next...`);
+    
+    // Try loading current URL with different proxy
+    const currentUrl = elements.urlInput.value;
+    if (currentUrl) {
+      loadUrl(currentUrl);
+    }
+  }
+}
+
+// Ultraviolet Codec - URL-safe base64 encoding
 const UltravioletCodec = {
   // XOR key for UV encoding
   _xorKey: [
@@ -325,30 +321,49 @@ const UltravioletCodec = {
     0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
   ],
   
+  // Convert standard base64 to URL-safe base64
+  _toBase64Url(base64) {
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  },
+  
+  // Convert URL-safe base64 to standard base64
+  _fromBase64Url(base64url) {
+    let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+    // Add padding
+    while (base64.length % 4) {
+      base64 += '=';
+    }
+    return base64;
+  },
+  
   encode(str) {
     if (!str) return str;
     try {
       const bytes = new TextEncoder().encode(str);
       const xorBytes = bytes.map((byte, i) => byte ^ this._xorKey[i % this._xorKey.length]);
-      return btoa(String.fromCharCode(...xorBytes));
+      const base64 = btoa(String.fromCharCode(...xorBytes));
+      return this._toBase64Url(base64);
     } catch (e) {
       // Fallback to simple XOR
-      return btoa(str.split('').map((char, i) => 
+      const base64 = btoa(str.split('').map((char, i) => 
         String.fromCharCode(char.charCodeAt(0) ^ (i % 2 ? 2 : 1))
       ).join(''));
+      return this._toBase64Url(base64);
     }
   },
   
   decode(str) {
     if (!str) return str;
     try {
-      const bytes = Uint8Array.from(atob(str), c => c.charCodeAt(0));
+      const base64 = this._fromBase64Url(str);
+      const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
       const xorBytes = bytes.map((byte, i) => byte ^ this._xorKey[i % this._xorKey.length]);
       return new TextDecoder().decode(xorBytes);
     } catch (e) {
       // Fallback
       try {
-        const decoded = atob(str);
+        const base64 = this._fromBase64Url(str);
+        const decoded = atob(base64);
         return decoded.split('').map((char, i) => 
           String.fromCharCode(char.charCodeAt(0) ^ (i % 2 ? 2 : 1))
         ).join('');
@@ -659,33 +674,45 @@ window.addEventListener('message', (e) => {
 window.tkhubWSS = AppState.settings.enableWSS !== false; // Default true
 
 function goBack() {
-  if (AppState.historyIndex > 0) {
+  if (BrowserTabs && BrowserTabs.activeTabId) {
+    BrowserTabs.goBack();
+  } else if (AppState.historyIndex > 0) {
     AppState.historyIndex--;
     const url = AppState.history[AppState.historyIndex];
     elements.urlInput.value = url;
-    elements.proxyFrame.src = AppState.settings.enableCors ? getCorsProxyUrl(url) : url;
+    loadUrl(url);
     updateNavButtons();
   }
 }
 
 function goForward() {
-  if (AppState.historyIndex < AppState.history.length - 1) {
+  if (BrowserTabs && BrowserTabs.activeTabId) {
+    BrowserTabs.goForward();
+  } else if (AppState.historyIndex < AppState.history.length - 1) {
     AppState.historyIndex++;
     const url = AppState.history[AppState.historyIndex];
     elements.urlInput.value = url;
-    elements.proxyFrame.src = AppState.settings.enableCors ? getCorsProxyUrl(url) : url;
+    loadUrl(url);
     updateNavButtons();
   }
 }
 
 function refresh() {
-  elements.proxyFrame.src = elements.proxyFrame.src;
+  if (BrowserTabs && BrowserTabs.activeTabId) {
+    BrowserTabs.refresh();
+  } else {
+    elements.proxyFrame.src = elements.proxyFrame.src;
+  }
 }
 
 function goHome() {
-  elements.proxyFrame.classList.add('hidden');
-  elements.startPage.classList.remove('hidden');
-  elements.urlInput.value = '';
+  if (BrowserTabs && BrowserTabs.activeTabId) {
+    BrowserTabs.showStartPage();
+  } else {
+    elements.proxyFrame.classList.add('hidden');
+    elements.startPage.classList.remove('hidden');
+    elements.urlInput.value = '';
+  }
 }
 
 function updateNavButtons() {
@@ -1412,80 +1439,183 @@ function renderGames() {
     return;
   }
   
-  AppState.games.forEach(game => {
-    const gameItem = document.createElement('div');
-    gameItem.className = 'game-item';
-    gameItem.dataset.id = game.id;
-    gameItem.innerHTML = `
-      <div class="game-icon"><i class="fas ${game.icon}"></i></div>
-      <div class="game-info">
-        <div class="game-title">${game.name}</div>
-        <div class="game-meta">${game.category || 'Game'}</div>
-      </div>
-    `;
+  // Use DocumentFragment for better performance
+  const fragment = document.createDocumentFragment();
+  const batchSize = 50; // Render in batches for large lists
+  const totalGames = AppState.games.length;
+  
+  // For very large lists, use virtual scrolling
+  if (totalGames > 200) {
+    setupVirtualScrolling(gamesList, AppState.games);
+    return;
+  }
+  
+  // Batch rendering for medium lists
+  const renderBatch = (startIndex) => {
+    const endIndex = Math.min(startIndex + batchSize, totalGames);
     
-    gameItem.addEventListener('click', () => loadGame(game));
+    for (let i = startIndex; i < endIndex; i++) {
+      const game = AppState.games[i];
+      const gameItem = createGameElement(game);
+      fragment.appendChild(gameItem);
+    }
     
-    // Right-click to open context menu
-    gameItem.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      
-      // Create custom context menu for game item
-      const menu = document.createElement('div');
-      menu.className = 'context-menu open';
-      menu.style.left = e.clientX + 'px';
-      menu.style.top = e.clientY + 'px';
-      menu.innerHTML = `
-        <div class="context-item" data-action="play">
-          <i class="fas fa-play"></i> Play in Tab
-        </div>
-        <div class="context-item" data-action="window">
-          <i class="fas fa-external-link-alt"></i> Open Windowed
-        </div>
-        <div class="context-divider"></div>
-        <div class="context-item" data-action="fullscreen">
-          <i class="fas fa-expand"></i> Fullscreen
-        </div>
-      `;
-      
-      document.body.appendChild(menu);
-      
-      // Handle menu actions
-      menu.querySelectorAll('.context-item').forEach(item => {
-        item.addEventListener('click', () => {
-          const action = item.dataset.action;
-          if (action === 'play') {
-            loadGame(game);
-          } else if (action === 'window') {
-            if (windowManager) windowManager.createWindow(game);
-          } else if (action === 'fullscreen') {
-            loadGame(game);
-            setTimeout(() => {
-              if (elements.gameFrame.requestFullscreen) {
-                elements.gameFrame.requestFullscreen().then(() => {
-                  elements.gameFrame.focus();
-                  setTimeout(() => requestPointerLock(), 100);
-                }).catch(() => {
-                  elements.gameFrame.focus();
-                  requestPointerLock();
-                });
-              }
-            }, 100);
+    if (endIndex < totalGames) {
+      // Schedule next batch
+      requestAnimationFrame(() => renderBatch(endIndex));
+    } else {
+      // All batches complete
+      gamesList.appendChild(fragment);
+    }
+  };
+  
+  // Start rendering
+  renderBatch(0);
+}
+
+// Create a single game element (reusable)
+function createGameElement(game) {
+  const gameItem = document.createElement('div');
+  gameItem.className = 'game-item';
+  gameItem.dataset.id = game.id;
+  gameItem.innerHTML = `
+    <div class="game-icon"><i class="fas ${game.icon || 'fa-gamepad'}"></i></div>
+    <div class="game-info">
+      <div class="game-title">${game.name}</div>
+      <div class="game-meta">${game.category || 'Game'}</div>
+    </div>
+  `;
+  
+  // Use event delegation pattern for better performance
+  gameItem.addEventListener('click', () => loadGame(game));
+  gameItem.addEventListener('contextmenu', (e) => handleGameContextMenu(e, game));
+  
+  return gameItem;
+}
+
+// Handle context menu for game items
+function handleGameContextMenu(e, game) {
+  e.preventDefault();
+  e.stopPropagation();
+  
+  // Remove any existing menus
+  document.querySelectorAll('.context-menu').forEach(m => m.remove());
+  
+  // Create custom context menu for game item
+  const menu = document.createElement('div');
+  menu.className = 'context-menu open';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  menu.innerHTML = `
+    <div class="context-item" data-action="play">
+      <i class="fas fa-play"></i> Play in Tab
+    </div>
+    <div class="context-item" data-action="window">
+      <i class="fas fa-external-link-alt"></i> Open Windowed
+    </div>
+    <div class="context-divider"></div>
+    <div class="context-item" data-action="fullscreen">
+      <i class="fas fa-expand"></i> Fullscreen
+    </div>
+  `;
+  
+  document.body.appendChild(menu);
+  
+  // Handle menu actions
+  menu.querySelectorAll('.context-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const action = item.dataset.action;
+      if (action === 'play') {
+        loadGame(game);
+      } else if (action === 'window') {
+        if (windowManager) windowManager.createWindow(game);
+      } else if (action === 'fullscreen') {
+        loadGame(game);
+        setTimeout(() => {
+          if (elements.gameFrame.requestFullscreen) {
+            elements.gameFrame.requestFullscreen().then(() => {
+              elements.gameFrame.focus();
+              setTimeout(() => requestPointerLock(), 100);
+            }).catch(() => {
+              elements.gameFrame.focus();
+              requestPointerLock();
+            });
           }
-          menu.remove();
-        });
-      });
-      
-      // Remove menu on click elsewhere
-      const closeMenu = () => {
-        menu.remove();
-        document.removeEventListener('click', closeMenu);
-      };
-      setTimeout(() => document.addEventListener('click', closeMenu), 0);
+        }, 100);
+      }
+      menu.remove();
     });
+  });
+  
+  // Remove menu on click elsewhere
+  const closeMenu = (ev) => {
+    if (!menu.contains(ev.target)) {
+      menu.remove();
+      document.removeEventListener('click', closeMenu);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closeMenu), 0);
+}
+
+// Virtual scrolling for very large game lists (>200 games)
+function setupVirtualScrolling(container, games) {
+  const itemHeight = 60; // Approximate height of each game item
+  const viewportHeight = container.clientHeight || 400;
+  const bufferItems = 5; // Extra items to render above/below viewport
+  const visibleItems = Math.ceil(viewportHeight / itemHeight) + (bufferItems * 2);
+  
+  // Create scroll container
+  container.style.overflowY = 'auto';
+  container.style.maxHeight = 'calc(100vh - 200px)';
+  
+  // Create spacer for total height
+  const totalHeight = games.length * itemHeight;
+  const spacer = document.createElement('div');
+  spacer.style.height = totalHeight + 'px';
+  spacer.style.position = 'relative';
+  
+  // Create visible items container
+  const visibleContainer = document.createElement('div');
+  visibleContainer.style.position = 'absolute';
+  visibleContainer.style.top = '0';
+  visibleContainer.style.left = '0';
+  visibleContainer.style.right = '0';
+  
+  spacer.appendChild(visibleContainer);
+  container.appendChild(spacer);
+  
+  // Render visible items
+  const renderVisible = () => {
+    const scrollTop = container.scrollTop;
+    const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - bufferItems);
+    const endIndex = Math.min(games.length, startIndex + visibleItems);
     
-    gamesList.appendChild(gameItem);
+    visibleContainer.innerHTML = '';
+    visibleContainer.style.transform = `translateY(${startIndex * itemHeight}px)`;
+    
+    const fragment = document.createDocumentFragment();
+    for (let i = startIndex; i < endIndex; i++) {
+      const game = games[i];
+      const gameItem = createGameElement(game);
+      fragment.appendChild(gameItem);
+    }
+    visibleContainer.appendChild(fragment);
+  };
+  
+  // Initial render
+  renderVisible();
+  
+  // Debounced scroll handler
+  let scrollTimeout;
+  container.addEventListener('scroll', () => {
+    if (scrollTimeout) clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(renderVisible, 10);
+  });
+  
+  // Handle window resize
+  window.addEventListener('resize', () => {
+    if (scrollTimeout) clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(renderVisible, 100);
   });
 }
 
@@ -1812,7 +1942,7 @@ function closeGame() {
   AppState.currentGame = null;
 }
 
-// FPS Throttling System - Uses user's approach
+// FPS Throttling System - Enhanced for better iframe control
 function applyFpsLimit(fps) {
   const frame = elements.gameFrame;
   const fpsNum = parseInt(fps);
@@ -1828,72 +1958,136 @@ function applyFpsLimit(fps) {
   AppState.settings.gameFps = fpsNum;
   saveSettings();
   
-  const interval = 1000 / fpsNum;
+  console.log(`TKHub: Setting FPS limit to ${fpsNum}`);
   
-  // Inject FPS throttling script into iframe using user's approach
-  try {
-    const frameWindow = frame.contentWindow;
-    if (frameWindow) {
-      // Remove existing throttle first
-      if (frameWindow.__tkhubRestoreRAF) {
+  // Wait for frame to load then inject throttling
+  const injectThrottle = () => {
+    try {
+      const frameWindow = frame.contentWindow;
+      const frameDoc = frame.contentDocument || frameWindow.document;
+      
+      if (!frameWindow || !frameDoc) {
+        console.log('TKHub: Frame not ready, retrying...');
+        setTimeout(injectThrottle, 500);
+        return;
+      }
+      
+      // Remove existing throttle script
+      const existingScript = frameDoc.getElementById('tkhub-fps-throttle');
+      if (existingScript) {
+        existingScript.remove();
+      }
+      
+      // Restore original RAF if it was overridden
+      if (frameWindow.__tkhubOriginalRAF) {
         frameWindow.requestAnimationFrame = frameWindow.__tkhubOriginalRAF;
         delete frameWindow.__tkhubOriginalRAF;
         delete frameWindow.__tkhubRestoreRAF;
       }
       
-      // Store original and apply throttle
-      const originalRAF = frameWindow.requestAnimationFrame.bind(frameWindow);
-      frameWindow.__tkhubOriginalRAF = originalRAF;
-      
-      let lastTime = 0;
-      const throttleInterval = interval;
-      
-      frameWindow.requestAnimationFrame = (callback) => {
-        return originalRAF((timestamp) => {
-          if (timestamp - lastTime >= throttleInterval) {
-            lastTime = timestamp;
-            callback(timestamp);
-          } else {
-            frameWindow.requestAnimationFrame(callback);
-          }
-        });
-      };
-      
-      frameWindow.__tkhubRestoreRAF = () => {
-        frameWindow.requestAnimationFrame = frameWindow.__tkhubOriginalRAF;
-      };
-      
-      console.log(`TKHub: FPS throttled to ${fpsNum}`);
-    }
-  } catch (e) {
-    // Cross-origin restriction
-    console.log('Cannot throttle FPS - cross-origin restriction');
-    // Try postMessage approach for cross-origin frames
-    frame.contentWindow?.postMessage({ 
-      type: 'tkhub-fps-throttle', 
-      fps: fpsNum,
-      script: `
+      // Create and inject enhanced FPS throttling script
+      const script = frameDoc.createElement('script');
+      script.id = 'tkhub-fps-throttle';
+      script.textContent = `
         (function() {
-          if (window.__tkhubFpsActive) return;
-          window.__tkhubFpsActive = true;
+          if (window.__tkhubFpsActive) {
+            console.log('TKHub: Removing existing FPS throttle');
+            window.requestAnimationFrame = window.__tkhubOriginalRAF;
+            delete window.__tkhubOriginalRAF;
+            delete window.__tkhubFpsActive;
+          }
           
-          const originalRAF = window.requestAnimationFrame.bind(window);
+          const targetFPS = ${fpsNum};
+          const interval = 1000 / targetFPS;
           let lastTime = 0;
-          const interval = 1000 / ${fpsNum};
+          let frameCount = 0;
+          let fpsTime = 0;
           
+          // Store original RAF
+          const originalRAF = window.requestAnimationFrame.bind(window);
+          window.__tkhubOriginalRAF = originalRAF;
+          
+          // Override RAF with enhanced throttling
           window.requestAnimationFrame = function(callback) {
             return originalRAF(function(timestamp) {
+              const now = performance.now();
+              
+              // FPS calculation for debugging
+              frameCount++;
+              if (now - fpsTime >= 1000) {
+                console.log('TKHub: Actual FPS:', frameCount);
+                frameCount = 0;
+                fpsTime = now;
+              }
+              
               if (timestamp - lastTime >= interval) {
                 lastTime = timestamp;
-                callback(timestamp);
+                return callback(timestamp);
               } else {
-                window.requestAnimationFrame(callback);
+                // Queue the callback for the next available frame
+                return window.requestAnimationFrame(callback);
               }
             });
           };
+          
+          window.__tkhubFpsActive = true;
+          console.log('TKHub: FPS throttling active at', targetFPS, 'FPS');
+          
+          // Also throttle canvas animations if present
+          const originalSetInterval = window.setInterval.bind(window);
+          window.setInterval = function(callback, delay) {
+            if (delay < 16) { // Anything faster than 60fps
+              return originalSetInterval(callback, Math.max(delay, interval));
+            }
+            return originalSetInterval(callback, delay);
+          };
         })();
-      `
-    }, '*');
+      `;
+      
+      frameDoc.head.appendChild(script);
+      
+      // Apply to any existing canvas elements
+      const canvases = frameDoc.querySelectorAll('canvas');
+      canvases.forEach(canvas => {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          // Store original methods
+          const originalFillRect = ctx.fillRect.bind(ctx);
+          const originalDrawImage = ctx.drawImage.bind(ctx);
+          
+          // Throttle canvas operations
+          let lastCanvasTime = 0;
+          ctx.fillRect = function(...args) {
+            const now = performance.now();
+            if (now - lastCanvasTime >= interval) {
+              lastCanvasTime = now;
+              return originalFillRect(...args);
+            }
+          };
+          
+          ctx.drawImage = function(...args) {
+            const now = performance.now();
+            if (now - lastCanvasTime >= interval) {
+              lastCanvasTime = now;
+              return originalDrawImage(...args);
+            }
+          };
+        }
+      });
+      
+      showToast(`FPS limited to ${fpsNum}`);
+      
+    } catch (e) {
+      console.error('TKHub: Failed to inject FPS throttle:', e);
+      showToast('Failed to apply FPS limit');
+    }
+  };
+  
+  // Inject immediately if frame is loaded, otherwise wait
+  if (frame.contentDocument?.readyState === 'complete') {
+    injectThrottle();
+  } else {
+    frame.addEventListener('load', injectThrottle, { once: true });
   }
 }
 
@@ -2475,6 +2669,279 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('tkhub-sw.js').catch(console.error);
 }
 
+// ==================== BROWSER TABS ====================
+const BrowserTabs = {
+  tabs: [],
+  activeTabId: null,
+  nextTabId: 1,
+  
+  init() {
+    // Load saved tabs
+    const saved = localStorage.getItem('tkhubBrowserTabs');
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        this.tabs = data.tabs || [];
+        this.nextTabId = data.nextTabId || 1;
+        this.activeTabId = data.activeTabId;
+      } catch (e) {
+        console.error('Failed to load tabs:', e);
+      }
+    }
+    
+    // If no tabs, create default
+    if (this.tabs.length === 0) {
+      this.createTab();
+    }
+    
+    this.renderTabs();
+    this.setupEventListeners();
+    
+    // Restore active tab
+    if (this.activeTabId) {
+      this.switchToTab(this.activeTabId);
+    }
+  },
+  
+  createTab(url = null, title = 'New Tab') {
+    const tabId = this.nextTabId++;
+    const tab = {
+      id: tabId,
+      url: url,
+      title: title,
+      history: url ? [url] : [],
+      historyIndex: url ? 0 : -1,
+      favicon: null
+    };
+    
+    this.tabs.push(tab);
+    this.activeTabId = tabId;
+    this.saveTabs();
+    this.renderTabs();
+    
+    // Load URL if provided
+    if (url) {
+      this.loadTabContent(tab);
+    } else {
+      this.showStartPage();
+    }
+    
+    return tab;
+  },
+  
+  closeTab(tabId) {
+    const index = this.tabs.findIndex(t => t.id === tabId);
+    if (index === -1) return;
+    
+    this.tabs.splice(index, 1);
+    
+    // Switch to another tab if closing active
+    if (this.activeTabId === tabId) {
+      if (this.tabs.length > 0) {
+        const newIndex = Math.min(index, this.tabs.length - 1);
+        this.switchToTab(this.tabs[newIndex].id);
+      } else {
+        // Create new tab if all closed
+        this.createTab();
+      }
+    }
+    
+    this.saveTabs();
+    this.renderTabs();
+  },
+  
+  switchToTab(tabId) {
+    const tab = this.tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    
+    this.activeTabId = tabId;
+    this.renderTabs();
+    this.loadTabContent(tab);
+    this.saveTabs();
+  },
+  
+  loadTabContent(tab) {
+    if (tab.url) {
+      elements.startPage.classList.add('hidden');
+      elements.proxyFrame.classList.remove('hidden');
+      
+      // Use CORS proxy if enabled
+      if (AppState.settings.enableCors) {
+        const proxyUrl = getCorsProxyUrl(tab.url);
+        elements.proxyFrame.src = proxyUrl;
+      } else {
+        elements.proxyFrame.src = tab.url;
+      }
+      
+      elements.urlInput.value = tab.url;
+    } else {
+      this.showStartPage();
+    }
+  },
+  
+  showStartPage() {
+    elements.proxyFrame.src = 'about:blank';
+    elements.proxyFrame.classList.add('hidden');
+    elements.startPage.classList.remove('hidden');
+    elements.urlInput.value = '';
+  },
+  
+  updateActiveTab(url, title = null, favicon = null) {
+    const tab = this.tabs.find(t => t.id === this.activeTabId);
+    if (!tab) return;
+    
+    tab.url = url;
+    if (title) tab.title = title;
+    if (favicon) tab.favicon = favicon;
+    
+    // Update history
+    if (tab.historyIndex < tab.history.length - 1) {
+      tab.history = tab.history.slice(0, tab.historyIndex + 1);
+    }
+    tab.history.push(url);
+    tab.historyIndex++;
+    
+    this.saveTabs();
+    this.renderTabs();
+  },
+  
+  navigateInActiveTab(url) {
+    const tab = this.tabs.find(t => t.id === this.activeTabId);
+    if (!tab) return;
+    
+    // Load the URL
+    elements.startPage.classList.add('hidden');
+    elements.proxyFrame.classList.remove('hidden');
+    
+    if (AppState.settings.enableCors) {
+      const proxyUrl = getCorsProxyUrl(url);
+      elements.proxyFrame.src = proxyUrl;
+    } else {
+      elements.proxyFrame.src = url;
+    }
+    
+    this.updateActiveTab(url);
+    elements.urlInput.value = url;
+  },
+  
+  goBack() {
+    const tab = this.tabs.find(t => t.id === this.activeTabId);
+    if (!tab || tab.historyIndex <= 0) return;
+    
+    tab.historyIndex--;
+    const url = tab.history[tab.historyIndex];
+    this.loadTabContent({ ...tab, url });
+  },
+  
+  goForward() {
+    const tab = this.tabs.find(t => t.id === this.activeTabId);
+    if (!tab || tab.historyIndex >= tab.history.length - 1) return;
+    
+    tab.historyIndex++;
+    const url = tab.history[tab.historyIndex];
+    this.loadTabContent({ ...tab, url });
+  },
+  
+  refresh() {
+    const tab = this.tabs.find(t => t.id === this.activeTabId);
+    if (tab && tab.url) {
+      this.loadTabContent(tab);
+    }
+  },
+  
+  renderTabs() {
+    const container = document.getElementById('browserTabs');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    
+    this.tabs.forEach(tab => {
+      const tabEl = document.createElement('div');
+      tabEl.className = 'browser-tab' + (tab.id === this.activeTabId ? ' active' : '');
+      tabEl.dataset.tabId = tab.id;
+      
+      const icon = tab.favicon ? `<img src="${tab.favicon}" style="width:16px;height:16px;">` : '<i class="fas fa-globe"></i>';
+      
+      tabEl.innerHTML = `
+        ${icon}
+        <span class="tab-title">${this.escapeHtml(tab.title)}</span>
+        <button class="tab-close-btn" data-tab-id="${tab.id}">
+          <i class="fas fa-times"></i>
+        </button>
+      `;
+      
+      // Tab click to switch
+      tabEl.addEventListener('click', (e) => {
+        if (e.target.closest('.tab-close-btn')) return;
+        this.switchToTab(tab.id);
+      });
+      
+      // Close button
+      const closeBtn = tabEl.querySelector('.tab-close-btn');
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.closeTab(tab.id);
+      });
+      
+      container.appendChild(tabEl);
+    });
+  },
+  
+  setupEventListeners() {
+    // New tab button
+    document.getElementById('newTabBtn')?.addEventListener('click', () => {
+      this.createTab();
+    });
+    
+    // Listen for iframe load to update tab info
+    elements.proxyFrame?.addEventListener('load', () => {
+      try {
+        const src = elements.proxyFrame.src;
+        if (src && src !== 'about:blank') {
+          // Try to get title from iframe
+          let title = 'Loading...';
+          try {
+            const frameDoc = elements.proxyFrame.contentDocument;
+            if (frameDoc && frameDoc.title) {
+              title = frameDoc.title;
+            }
+          } catch (e) {
+            // Cross-origin, can't access
+          }
+          
+          // Decode URL if it's a proxied URL
+          let url = src;
+          const match = src.match(/\/service\/(.+)$/);
+          if (match) {
+            const decoded = UltravioletCodec.decode(match[1]);
+            if (decoded && decoded !== src) {
+              url = decoded;
+            }
+          }
+          
+          this.updateActiveTab(url, title);
+        }
+      } catch (e) {
+        console.error('Error updating tab:', e);
+      }
+    });
+  },
+  
+  saveTabs() {
+    localStorage.setItem('tkhubBrowserTabs', JSON.stringify({
+      tabs: this.tabs,
+      nextTabId: this.nextTabId,
+      activeTabId: this.activeTabId
+    }));
+  },
+  
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+};
+
 // Prevent leaving if in stealth mode
 window.addEventListener('beforeunload', (e) => {
   if (AppState.settings.stealthMode) {
@@ -2995,11 +3462,126 @@ const ColorThemeSystem = {
     // Calculate glass background based on base
     root.style.setProperty('--tk-glass-bg', `rgba(${this.hexToRgb(color.base).r}, ${this.hexToRgb(color.base).g}, ${this.hexToRgb(color.base).b}, 0.88)`);
     
+    // Apply color to 3D theme if active
+    if (ThemeSystem.beatSaberScene) {
+      this.applyTo3DTheme(color);
+    }
+    
     this.currentColorTheme = colorIndex;
     AppState.settings.colorTheme = colorIndex;
     saveSettings();
     
     console.log(`TKHub: Color theme applied - ${color.name}`);
+  },
+  
+  applyTo3DTheme(color) {
+    if (!ThemeSystem.beatSaberScene) return;
+    
+    const { scene, menuPanels, particles, gridHelper } = ThemeSystem.beatSaberScene;
+    
+    // Update lighting colors
+    const lights = scene.children.filter(child => child instanceof THREE.Light);
+    lights.forEach(light => {
+      if (light instanceof THREE.HemisphereLight) {
+        light.color.setHex(parseInt(color.accent.replace('#', '0x')));
+      } else if (light instanceof THREE.PointLight) {
+        light.color.setHex(parseInt(color.accent.replace('#', '0x')));
+      }
+    });
+    
+    // Update particle color
+    if (particles) {
+      const material = particles.material;
+      material.color.setHex(parseInt(color.accent.replace('#', '0x')));
+    }
+    
+    // Update grid colors
+    if (gridHelper) {
+      gridHelper.material.color.setHex(parseInt(color.accent.replace('#', '0x')));
+    }
+    
+    // Update panel colors based on their original colors
+    menuPanels.forEach((panel, index) => {
+      const material = panel.material;
+      const edgesMaterial = panel.children[0]?.material;
+      
+      // Apply color variations while maintaining distinction
+      const hue = this.getHueFromHex(color.accent);
+      const adjustedColors = this.generatePanelColors(hue, index);
+      
+      material.color.setHex(adjustedColors.primary);
+      material.emissive.setHex(adjustedColors.emissive);
+      
+      if (edgesMaterial) {
+        edgesMaterial.color.setHex(adjustedColors.primary);
+      }
+    });
+  },
+  
+  getHueFromHex(hex) {
+    const rgb = this.hexToRgb(hex);
+    const r = rgb.r / 255;
+    const g = rgb.g / 255;
+    const b = rgb.b / 255;
+    
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    let hue = 0;
+    
+    if (max !== min) {
+      const d = max - min;
+      switch (max) {
+        case r: hue = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+        case g: hue = ((b - r) / d + 2) / 6; break;
+        case b: hue = ((r - g) / d + 4) / 6; break;
+      }
+    }
+    
+    return hue;
+  },
+  
+  generatePanelColors(baseHue, index) {
+    // Generate distinct colors for each panel based on the base hue
+    const hueShifts = [0, 60, 120, 180, 240]; // Complementary colors
+    const hue = (baseHue + hueShifts[index % hueShifts.length]) % 1;
+    
+    const primary = this.hslToHex(hue, 0.7, 0.5);
+    const emissive = this.hslToHex(hue, 0.8, 0.3);
+    
+    return {
+      primary: parseInt(primary.replace('#', '0x')),
+      emissive: parseInt(emissive.replace('#', '0x'))
+    };
+  },
+  
+  hslToHex(h, s, l) {
+    let r, g, b;
+    
+    if (s === 0) {
+      r = g = b = l;
+    } else {
+      const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+      };
+      
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      r = hue2rgb(p, q, h + 1/3);
+      g = hue2rgb(p, q, h);
+      b = hue2rgb(p, q, h - 1/3);
+    }
+    
+    const toHex = x => {
+      const hex = Math.round(x * 255).toString(16);
+      return hex.length === 1 ? '0' + hex : hex;
+    };
+    
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
   },
   
   hexToRgb(hex) {
@@ -3124,15 +3706,227 @@ const ThemeSystem = {
     showToast(`Theme: ${effect.name}`);
   },
   
-  initThreeJS() {
-    if (window.THREE) return;
+  initThreeD() {
+    if (window.THREE) {
+      this.initBeatSaberMenu();
+      return;
+    }
     
     const script = document.createElement('script');
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
     script.onload = () => {
-      AnimationSystem.initThreeD();
+      this.initBeatSaberMenu();
     };
     document.head.appendChild(script);
+  },
+  
+  initBeatSaberMenu() {
+    if (!window.THREE || this.beatSaberScene) return;
+    
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.domElement.style.position = 'fixed';
+    renderer.domElement.style.top = '0';
+    renderer.domElement.style.left = '0';
+    renderer.domElement.style.zIndex = '-1';
+    renderer.domElement.style.pointerEvents = 'none';
+    document.body.appendChild(renderer.domElement);
+    
+    // Create Beat Saber-style environment
+    const envLight = new THREE.HemisphereLight(0xa5b4fc, 0x1a1a2e, 0.6);
+    scene.add(envLight);
+    
+    const pointLight = new THREE.PointLight(0xa5b4fc, 1, 100);
+    pointLight.position.set(10, 10, 10);
+    scene.add(pointLight);
+    
+    // Create floating menu panels for each tab
+    const menuPanels = [];
+    const tabData = [
+      { name: 'Browser', icon: 'globe', color: 0x60a5fa, position: [-4, 0, 0] },
+      { name: 'Games', icon: 'gamepad', color: 0x34d399, position: [-2, 0, -2] },
+      { name: 'Editor', icon: 'code', color: 0xfbbf24, position: [0, 0, -4] },
+      { name: 'Settings', icon: 'cog', color: 0xf87171, position: [2, 0, -2] },
+      { name: 'Inspector', icon: 'search', color: 0xc084fc, position: [4, 0, 0] }
+    ];
+    
+    tabData.forEach((tab, index) => {
+      // Create glowing panel
+      const geometry = new THREE.BoxGeometry(1.5, 0.8, 0.1);
+      const material = new THREE.MeshPhongMaterial({
+        color: tab.color,
+        emissive: tab.color,
+        emissiveIntensity: 0.2,
+        transparent: true,
+        opacity: 0.8
+      });
+      
+      const panel = new THREE.Mesh(geometry, material);
+      panel.position.set(...tab.position);
+      panel.userData = { tab: tab.name.toLowerCase(), color: tab.color };
+      
+      // Add glowing edges
+      const edges = new THREE.EdgesGeometry(geometry);
+      const edgesMaterial = new THREE.LineBasicMaterial({ 
+        color: tab.color, 
+        linewidth: 2,
+        transparent: true,
+        opacity: 0.8
+      });
+      const edgesMesh = new THREE.LineSegments(edges, edgesMaterial);
+      panel.add(edgesMesh);
+      
+      scene.add(panel);
+      menuPanels.push(panel);
+    });
+    
+    // Create floating particles
+    const particlesGeometry = new THREE.BufferGeometry();
+    const particlesCount = 200;
+    const positions = new Float32Array(particlesCount * 3);
+    
+    for (let i = 0; i < particlesCount * 3; i += 3) {
+      positions[i] = (Math.random() - 0.5) * 20;
+      positions[i + 1] = (Math.random() - 0.5) * 20;
+      positions[i + 2] = (Math.random() - 0.5) * 20;
+    }
+    
+    particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    
+    const particlesMaterial = new THREE.PointsMaterial({
+      color: 0xa5b4fc,
+      size: 0.05,
+      transparent: true,
+      opacity: 0.6,
+      blending: THREE.AdditiveBlending
+    });
+    
+    const particles = new THREE.Points(particlesGeometry, particlesMaterial);
+    scene.add(particles);
+    
+    // Create grid floor
+    const gridHelper = new THREE.GridHelper(20, 20, 0xa5b4fc, 0x4c1d95);
+    gridHelper.position.y = -3;
+    scene.add(gridHelper);
+    
+    camera.position.set(0, 2, 8);
+    camera.lookAt(0, 0, 0);
+    
+    this.beatSaberScene = { 
+      scene, 
+      camera, 
+      renderer, 
+      menuPanels, 
+      particles,
+      gridHelper,
+      mouse: new THREE.Vector2(),
+      raycaster: new THREE.Raycaster()
+    };
+    
+    // Mouse interaction for panels
+    this.setupBeatSaberInteraction();
+    
+    // Animation loop
+    const animate = () => {
+      if (!this.beatSaberScene) return;
+      
+      const time = Date.now() * 0.001;
+      
+      // Rotate and float menu panels
+      menuPanels.forEach((panel, index) => {
+        panel.rotation.y = Math.sin(time + index) * 0.1;
+        panel.position.y = Math.sin(time * 1.5 + index) * 0.3;
+        
+        // Glow effect
+        const material = panel.material;
+        material.emissiveIntensity = 0.2 + Math.sin(time * 2 + index) * 0.1;
+      });
+      
+      // Animate particles
+      particles.rotation.y += 0.001;
+      particles.rotation.x += 0.0005;
+      
+      // Pulse grid
+      gridHelper.material.opacity = 0.3 + Math.sin(time * 2) * 0.1;
+      
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    };
+    
+    animate();
+    
+    // Handle resize
+    window.addEventListener('resize', () => {
+      if (this.beatSaberScene) {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+    });
+    
+    console.log('TKHub: Beat Saber-style 3D menu initialized');
+  },
+  
+  setupBeatSaberInteraction() {
+    if (!this.beatSaberScene) return;
+    
+    const { raycaster, mouse, camera, menuPanels } = this.beatSaberScene;
+    
+    const onMouseMove = (event) => {
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(menuPanels);
+      
+      menuPanels.forEach(panel => {
+        const material = panel.material;
+        if (intersects.length > 0 && intersects[0].object === panel) {
+          material.emissiveIntensity = 0.5;
+          panel.scale.set(1.1, 1.1, 1.1);
+          document.body.style.cursor = 'pointer';
+        } else {
+          material.emissiveIntensity = 0.2;
+          panel.scale.set(1, 1, 1);
+          document.body.style.cursor = 'default';
+        }
+      });
+    };
+    
+    const onMouseClick = (event) => {
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(menuPanels);
+      
+      if (intersects.length > 0) {
+        const panel = intersects[0].object;
+        const tabName = panel.userData.tab;
+        
+        // Switch to the selected tab
+        if (tabName === 'browser') switchTab('browser');
+        else if (tabName === 'games') switchTab('games');
+        else if (tabName === 'editor') switchTab('editor');
+        else if (tabName === 'settings') switchTab('settings');
+        else if (tabName === 'inspector') openInspect();
+        
+        // Visual feedback
+        panel.material.emissiveIntensity = 1;
+        setTimeout(() => {
+          panel.material.emissiveIntensity = 0.2;
+        }, 200);
+      }
+    };
+    
+    // Enable pointer events for interaction
+    this.beatSaberScene.renderer.domElement.style.pointerEvents = 'auto';
+    this.beatSaberScene.renderer.domElement.addEventListener('mousemove', onMouseMove);
+    this.beatSaberScene.renderer.domElement.addEventListener('click', onMouseClick);
   }
 };
 
@@ -3673,6 +4467,34 @@ function initSettingsTabListeners() {
     AnimationSystem.apply(e.target.value);
   });
   
+  // Search engine select
+  document.getElementById('settingsSearchEngine')?.addEventListener('change', (e) => {
+    AppState.settings.searchEngine = e.target.value;
+    saveSettings();
+    showToast(`Search engine set to ${e.target.options[e.target.selectedIndex].text}`);
+  });
+  
+  // Proxy type select
+  document.getElementById('settingsProxyType')?.addEventListener('change', (e) => {
+    AppState.settings.proxyType = e.target.value;
+    saveSettings();
+    showToast(`Proxy type set to ${e.target.options[e.target.selectedIndex].text}`);
+  });
+  
+  // Stealth mode toggle
+  document.getElementById('settingsStealthMode')?.addEventListener('change', (e) => {
+    AppState.settings.stealthMode = e.target.checked;
+    saveSettings();
+    showToast(`Stealth mode ${e.target.checked ? 'enabled' : 'disabled'}`);
+  });
+  
+  // Block history toggle
+  document.getElementById('settingsBlockHistory')?.addEventListener('change', (e) => {
+    AppState.settings.blockHistory = e.target.checked;
+    saveSettings();
+    showToast(`History ${e.target.checked ? 'blocked' : 'enabled'}`);
+  });
+  
   // Color theme buttons
   document.querySelectorAll('.color-theme-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -3780,6 +4602,7 @@ document.addEventListener('DOMContentLoaded', () => {
   QoLFeatures.init();
   ModManager.init();
   GameDevTools.init();
+  BrowserTabs.init();
 });
 
 // ==================== DAILY QUOTE SYSTEM ====================
@@ -4065,33 +4888,129 @@ const ModManager = {
       return;
     }
     
-    try {
-      // For same-origin frames
-      const frameDoc = frame.contentDocument || frame.contentWindow.document;
-      const script = frameDoc.createElement('script');
-      script.textContent = `
-        (function() {
-          try {
-            ${mod.code}
-            console.log('[TKHub Mod] ${mod.name} injected successfully');
-          } catch(e) {
-            console.error('[TKHub Mod] Error in ${mod.name}:', e);
+    const tryDirectInjection = () => {
+      try {
+        // For same-origin frames and blob URLs
+        const frameDoc = frame.contentDocument || frame.contentWindow.document;
+        if (frameDoc) {
+          const script = frameDoc.createElement('script');
+          script.textContent = `
+            (function() {
+              try {
+                ${mod.code}
+                console.log('[TKHub Mod] ${mod.name} injected successfully');
+                // Notify parent of successful injection
+                window.parent.postMessage({
+                  type: 'tkhub-mod-result',
+                  success: true,
+                  name: '${mod.name}'
+                }, '*');
+              } catch(e) {
+                console.error('[TKHub Mod] Error in ${mod.name}:', e);
+                // Notify parent of error
+                window.parent.postMessage({
+                  type: 'tkhub-mod-result',
+                  success: false,
+                  name: '${mod.name}',
+                  error: e.message
+                }, '*');
+              }
+            })();
+          `;
+          frameDoc.head.appendChild(script);
+          
+          // Remove script after execution to avoid conflicts
+          setTimeout(() => script.remove(), 100);
+          
+          if (!isTest) {
+            this.logToInspector(`Injected mod: ${mod.name} (direct)`);
           }
-        })();
-      `;
-      frameDoc.head.appendChild(script);
-      
-      if (!isTest) {
-        // Log to inspector
-        this.logToInspector(`Injected mod: ${mod.name}`);
+          return true;
+        }
+      } catch (e) {
+        console.log('TKHub: Direct mod injection failed:', e);
+        return false;
       }
-    } catch (e) {
-      // Cross-origin, try postMessage
+    };
+    
+    const tryPostMessageInjection = () => {
+      // Set up listener for response
+      const handleResponse = (e) => {
+        if (e.data && e.data.type === 'tkhub-mod-result') {
+          window.removeEventListener('message', handleResponse);
+          if (e.data.success) {
+            if (!isTest) {
+              this.logToInspector(`Injected mod: ${mod.name} (postMessage)`);
+            }
+            showToast(`Mod "${mod.name}" injected successfully`);
+          } else {
+            showToast(`Mod "${mod.name}" injection failed: ${e.data.error}`);
+          }
+        }
+      };
+      
+      window.addEventListener('message', handleResponse);
+      
+      // Send mod code via postMessage
       frame.contentWindow.postMessage({
-        type: 'tkhub-mod',
+        type: 'tkhub-mod-inject',
         code: mod.code,
         name: mod.name
       }, '*');
+      
+      // Timeout
+      setTimeout(() => {
+        window.removeEventListener('message', handleResponse);
+        if (!isTest) {
+          this.logToInspector(`Mod injection timeout: ${mod.name}`);
+        }
+      }, 3000);
+    };
+    
+    const tryScriptTagInjection = () => {
+      try {
+        // Alternative method using data URI
+        const scriptContent = `
+          try {
+            ${mod.code}
+            console.log('[TKHub Mod] ${mod.name} injected via script tag');
+          } catch(e) {
+            console.error('[TKHub Mod] Error in ${mod.name}:', e);
+          }
+        `;
+        
+        const blob = new Blob([scriptContent], { type: 'text/javascript' });
+        const scriptUrl = URL.createObjectURL(blob);
+        
+        const script = document.createElement('script');
+        script.src = scriptUrl;
+        script.onload = () => {
+          URL.revokeObjectURL(scriptUrl);
+          if (!isTest) {
+            this.logToInspector(`Injected mod: ${mod.name} (script tag)`);
+          }
+        };
+        script.onerror = () => {
+          URL.revokeObjectURL(scriptUrl);
+          console.log('TKHub: Script tag injection failed');
+        };
+        
+        const frameDoc = frame.contentDocument || frame.contentWindow.document;
+        if (frameDoc) {
+          frameDoc.head.appendChild(script);
+          return true;
+        }
+      } catch (e) {
+        console.log('TKHub: Script tag injection failed:', e);
+        return false;
+      }
+    };
+    
+    // Try injection methods in order
+    if (!tryDirectInjection()) {
+      if (!tryScriptTagInjection()) {
+        tryPostMessageInjection();
+      }
     }
   },
   
@@ -4275,34 +5194,78 @@ const GameDevTools = {
     
     this.logToConsole('info', ['> ' + code]);
     
-    // First try direct eval (works for same-origin / blob URLs)
-    try {
-      const result = frame.contentWindow.eval(code);
-      this.logToConsole('log', [result]);
-      return;
-    } catch (directError) {
-      // Cross-origin, use postMessage
-    }
-    
-    // Use postMessage for cross-origin execution
-    const handleResponse = (e) => {
-      if (e.data && e.data.type === 'tkhub-console-response') {
-        window.removeEventListener('message', handleResponse);
-        if (e.data.error) {
-          this.logToConsole('error', [e.data.error]);
-        } else {
-          this.logToConsole('log', [e.data.result]);
-        }
+    // Enhanced approach for local/offline iframes
+    const tryDirectExecution = () => {
+      try {
+        // Try direct eval first (works for same-origin / blob URLs)
+        const result = frame.contentWindow.eval(code);
+        this.logToConsole('log', [result]);
+        return true;
+      } catch (directError) {
+        console.log('TKHub: Direct eval failed, trying alternative methods');
+        return false;
       }
     };
     
-    window.addEventListener('message', handleResponse);
-    frame.contentWindow.postMessage({ type: 'tkhub-console-exec', code: code }, '*');
+    const tryScriptInjection = () => {
+      try {
+        const frameDoc = frame.contentDocument || frame.contentWindow.document;
+        if (frameDoc) {
+          const script = frameDoc.createElement('script');
+          script.textContent = `
+            (function() {
+              try {
+                const result = eval(${JSON.stringify(code)});
+                window.parent.postMessage({
+                  type: 'tkhub-console-response',
+                  result: typeof result === 'object' ? JSON.stringify(result) : String(result)
+                }, '*');
+              } catch (e) {
+                window.parent.postMessage({
+                  type: 'tkhub-console-response',
+                  error: e.message
+                }, '*');
+              }
+            })();
+          `;
+          frameDoc.head.appendChild(script);
+          script.remove();
+          return true;
+        }
+      } catch (e) {
+        console.log('TKHub: Script injection failed:', e);
+        return false;
+      }
+    };
     
-    // Timeout to clean up listener if no response
-    setTimeout(() => {
-      window.removeEventListener('message', handleResponse);
-    }, 5000);
+    const tryPostMessage = () => {
+      const handleResponse = (e) => {
+        if (e.data && e.data.type === 'tkhub-console-response') {
+          window.removeEventListener('message', handleResponse);
+          if (e.data.error) {
+            this.logToConsole('error', [e.data.error]);
+          } else {
+            this.logToConsole('log', [e.data.result]);
+          }
+        }
+      };
+      
+      window.addEventListener('message', handleResponse);
+      frame.contentWindow.postMessage({ type: 'tkhub-console-exec', code: code }, '*');
+      
+      // Timeout to clean up listener if no response
+      setTimeout(() => {
+        window.removeEventListener('message', handleResponse);
+        this.logToConsole('warn', ['No response from iframe (cross-origin restriction)']);
+      }, 5000);
+    };
+    
+    // Try methods in order of preference
+    if (!tryDirectExecution()) {
+      if (!tryScriptInjection()) {
+        tryPostMessage();
+      }
+    }
   },
   
   refreshElements() {

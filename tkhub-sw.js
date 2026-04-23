@@ -1,9 +1,9 @@
 /**
- * TKHub - Service Worker
- * Provides offline support, caching, and CORS header injection
+ * TKHub - Simple Service Worker
+ * Provides offline support and CORS header injection only
  */
 
-const CACHE_NAME = 'tkhub-v1.2.1';
+const CACHE_NAME = 'tkhub-v1.2.2';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -68,7 +68,7 @@ function injectCorsHeaders(response) {
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  const url = request.url;
+  const url = new URL(request.url);
   
   // Handle CORS preflight requests
   if (request.method === 'OPTIONS') {
@@ -90,7 +90,7 @@ self.addEventListener('fetch', (event) => {
       .then((cachedResponse) => {
         // Return cached version if available
         if (cachedResponse) {
-          if (shouldInjectCors(url)) {
+          if (shouldInjectCors(url.href)) {
             return injectCorsHeaders(cachedResponse);
           }
           return cachedResponse;
@@ -109,7 +109,7 @@ self.addEventListener('fetch', (event) => {
             }
             
             // Inject CORS headers for game content
-            if (shouldInjectCors(url)) {
+            if (shouldInjectCors(url.href)) {
               return injectCorsHeaders(networkResponse);
             }
             
