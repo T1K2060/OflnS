@@ -82,8 +82,8 @@ document.addEventListener('DOMContentLoaded', () => {
     openInBlank();
   }
   
-  // Load games from directory
-  scanGamesDirectory();
+  // Load games from base64 chunks
+  loadBase64Games();
   
   // Load stored games from IndexedDB
   loadStoredGames();
@@ -261,16 +261,19 @@ function loadUrl(url) {
     
     startLinkInterception();
     
-    // Update URL input with current URL (decoded from proxy if needed)
+    // Update URL input with current URL
     try {
       const currentSrc = elements.proxyFrame.src;
-      // Extract URL from /service/ path (local UV proxy)
-      const match = currentSrc.match(/\/service\/(.+)$/);
-      if (match) {
-        const decoded = UltravioletCodec.decode(match[1]);
-        if (decoded && decoded !== currentSrc) {
-          elements.urlInput.value = decoded;
-        }
+      // Check if it's a proxied URL
+      if (currentSrc.includes('corsproxy.io/?')) {
+        const decoded = decodeURIComponent(currentSrc.split('corsproxy.io/?')[1]);
+        if (decoded) elements.urlInput.value = decoded;
+      } else if (currentSrc.includes('allorigins.win/raw?url=')) {
+        const decoded = decodeURIComponent(currentSrc.split('allorigins.win/raw?url=')[1]);
+        if (decoded) elements.urlInput.value = decoded;
+      } else if (currentSrc.includes('codetabs.com/v1/proxy?quest=')) {
+        const decoded = decodeURIComponent(currentSrc.split('codetabs.com/v1/proxy?quest=')[1]);
+        if (decoded) elements.urlInput.value = decoded;
       }
     } catch (e) {
       // Ignore decoding errors
@@ -278,20 +281,18 @@ function loadUrl(url) {
   });
 }
 
+// Simple CORS Proxy - uses external proxy services
 function getCorsProxyUrl(url) {
-  // Use local Ultraviolet proxy
-  try {
-    // Encode URL using Ultraviolet's XOR codec
-    const encoded = UltravioletCodec.encode(url);
-    const proxyUrl = '/service/' + encoded;
-    
-    console.log(`TKHub: Using local Ultraviolet proxy for ${url.substring(0, 50)}...`);
-    return proxyUrl;
-  } catch (e) {
-    console.error('TKHub: Ultraviolet encoding failed:', e);
-    // Fallback to external CORS proxy
-    return 'https://corsproxy.io/?' + encodeURIComponent(url);
-  }
+  const proxyServices = [
+    { name: 'corsproxy.io', url: 'https://corsproxy.io/?' },
+    { name: 'allorigins', url: 'https://api.allorigins.win/raw?url=' },
+    { name: 'codetabs', url: 'https://api.codetabs.com/v1/proxy?quest=' }
+  ];
+  
+  // Use first proxy (corsproxy.io is most reliable)
+  const proxy = proxyServices[0];
+  console.log(`TKHub: Using ${proxy.name} for ${url.substring(0, 50)}...`);
+  return proxy.url + encodeURIComponent(url);
 }
 
 // Enhanced proxy error handling
@@ -308,106 +309,10 @@ function handleProxyError(error) {
     // Try loading current URL with different proxy
     const currentUrl = elements.urlInput.value;
     if (currentUrl) {
-      loadUrl(currentUrl);
+      tryAlternativeProxy(currentUrl);
     }
   }
 }
-
-// Ultraviolet Codec - URL-safe base64 encoding
-const UltravioletCodec = {
-  // XOR key for UV encoding
-  _xorKey: [
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
-  ],
-  
-  // Convert standard base64 to URL-safe base64
-  _toBase64Url(base64) {
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  },
-  
-  // Convert URL-safe base64 to standard base64
-  _fromBase64Url(base64url) {
-    let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
-    // Add padding
-    while (base64.length % 4) {
-      base64 += '=';
-    }
-    return base64;
-  },
-  
-  encode(str) {
-    if (!str) return str;
-    try {
-      const bytes = new TextEncoder().encode(str);
-      const xorBytes = bytes.map((byte, i) => byte ^ this._xorKey[i % this._xorKey.length]);
-      const base64 = btoa(String.fromCharCode(...xorBytes));
-      return this._toBase64Url(base64);
-    } catch (e) {
-      // Fallback to simple XOR
-      const base64 = btoa(str.split('').map((char, i) => 
-        String.fromCharCode(char.charCodeAt(0) ^ (i % 2 ? 2 : 1))
-      ).join(''));
-      return this._toBase64Url(base64);
-    }
-  },
-  
-  decode(str) {
-    if (!str) return str;
-    try {
-      const base64 = this._fromBase64Url(str);
-      const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-      const xorBytes = bytes.map((byte, i) => byte ^ this._xorKey[i % this._xorKey.length]);
-      return new TextDecoder().decode(xorBytes);
-    } catch (e) {
-      // Fallback
-      try {
-        const base64 = this._fromBase64Url(str);
-        const decoded = atob(base64);
-        return decoded.split('').map((char, i) => 
-          String.fromCharCode(char.charCodeAt(0) ^ (i % 2 ? 2 : 1))
-        ).join('');
-      } catch {
-        return str;
-      }
-    }
-  }
-};
-
-// Scramjet Codec - Proper implementation from MercuryWorkshop/scramjet
-const ScramjetCodec = {
-  // Scramjet uses a modified base64 with character shuffling
-  _charset: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',
-  _scrambled: 'QWERTYUIOPASDFGHJKLZXCVBNMqwertyuiopasdfghjklzxcvbnm9876543210+/',
-  
-  encode(str) {
-    if (!str) return str;
-    try {
-      // Standard base64 then shuffle
-      const base64 = btoa(unescape(encodeURIComponent(str)));
-      return base64.split('').map(c => {
-        const idx = this._charset.indexOf(c);
-        return idx >= 0 ? this._scrambled[idx] : c;
-      }).join('');
-    } catch (e) {
-      return str;
-    }
-  },
-  
-  decode(str) {
-    if (!str) return str;
-    try {
-      // Unshuffle then decode base64
-      const unshuffled = str.split('').map(c => {
-        const idx = this._scrambled.indexOf(c);
-        return idx >= 0 ? this._charset[idx] : c;
-      }).join('');
-      return decodeURIComponent(escape(atob(unshuffled)));
-    } catch (e) {
-      return str;
-    }
-  }
-};
 
 function tryAlternativeProxy(url) {
   // Try different proxy approaches when one fails
@@ -1201,6 +1106,61 @@ function createZipEndRecord(numEntries, cdSize, cdOffset) {
   dv.setUint16(20, 0, true); // ZIP file comment length
   
   return record;
+}
+
+function loadBase64Games() {
+  // Merge all game chunks (check if each exists before spreading)
+  const allGames = {
+    ...(typeof Games1 !== 'undefined' ? Games1 : {}),
+    ...(typeof Games2 !== 'undefined' ? Games2 : {}),
+    ...(typeof Games3 !== 'undefined' ? Games3 : {}),
+    ...(typeof Games4 !== 'undefined' ? Games4 : {}),
+    ...(typeof Games5 !== 'undefined' ? Games5 : {}),
+    ...(typeof Games6 !== 'undefined' ? Games6 : {}),
+    ...(typeof Games7 !== 'undefined' ? Games7 : {}),
+    ...(typeof Games8 !== 'undefined' ? Games8 : {}),
+    ...(typeof Games9 !== 'undefined' ? Games9 : {}),
+    ...(typeof Games10 !== 'undefined' ? Games10 : {}),
+    ...(typeof Games11 !== 'undefined' ? Games11 : {}),
+    ...(typeof Games12 !== 'undefined' ? Games12 : {}),
+    ...(typeof Games13 !== 'undefined' ? Games13 : {}),
+    ...(typeof Games14 !== 'undefined' ? Games14 : {}),
+    ...(typeof Games15 !== 'undefined' ? Games15 : {}),
+    ...(typeof Games16 !== 'undefined' ? Games16 : {}),
+    ...(typeof Games17 !== 'undefined' ? Games17 : {}),
+    ...(typeof Games18 !== 'undefined' ? Games18 : {}),
+    ...(typeof Games19 !== 'undefined' ? Games19 : {}),
+    ...(typeof Games20 !== 'undefined' ? Games20 : {}),
+    ...(typeof Games21 !== 'undefined' ? Games21 : {}),
+    ...(typeof Games22 !== 'undefined' ? Games22 : {}),
+    ...(typeof Games23 !== 'undefined' ? Games23 : {}),
+    ...(typeof Games24 !== 'undefined' ? Games24 : {}),
+    ...(typeof Games25 !== 'undefined' ? Games25 : {}),
+    ...(typeof Games26 !== 'undefined' ? Games26 : {}),
+    ...(typeof Games27 !== 'undefined' ? Games27 : {}),
+    ...(typeof Games28 !== 'undefined' ? Games28 : {}),
+    ...(typeof Games29 !== 'undefined' ? Games29 : {}),
+    ...(typeof Games30 !== 'undefined' ? Games30 : {}),
+    ...(typeof Games31 !== 'undefined' ? Games31 : {})
+  };
+
+  // Convert merged object to game objects
+  AppState.games = Object.entries(allGames).map(([filename, data]) => {
+    const html = atob(data.code);
+    const blob = new Blob([html], { type: "text/html" });
+    const blobUrl = URL.createObjectURL(blob);
+    const name = filename.replace(/\.(html|htm)$/i, "").replace(/[-_]/g, " ");
+    return {
+      id: filename,
+      name: name.charAt(0).toUpperCase() + name.slice(1),
+      path: blobUrl,
+      icon: "fa-gamepad",
+      category: "Game"
+    };
+  });
+
+  renderGames();
+  showToast(`Loaded ${AppState.games.length} games`);
 }
 
 async function scanGamesDirectory() {
@@ -2911,12 +2871,15 @@ const BrowserTabs = {
           
           // Decode URL if it's a proxied URL
           let url = src;
-          const match = src.match(/\/service\/(.+)$/);
-          if (match) {
-            const decoded = UltravioletCodec.decode(match[1]);
-            if (decoded && decoded !== src) {
-              url = decoded;
-            }
+          if (src.includes('corsproxy.io/?')) {
+            const decoded = decodeURIComponent(src.split('corsproxy.io/?')[1]);
+            if (decoded) url = decoded;
+          } else if (src.includes('allorigins.win/raw?url=')) {
+            const decoded = decodeURIComponent(src.split('allorigins.win/raw?url=')[1]);
+            if (decoded) url = decoded;
+          } else if (src.includes('codetabs.com/v1/proxy?quest=')) {
+            const decoded = decodeURIComponent(src.split('codetabs.com/v1/proxy?quest=')[1]);
+            if (decoded) url = decoded;
           }
           
           this.updateActiveTab(url, title);
